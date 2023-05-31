@@ -26,7 +26,7 @@
 #     go build -o vgpu-util && \
 #     mv vgpu-util /work
 
-ARG FEDORA_VERSION=36
+ARG FEDORA_VERSION=38
 ARG CUDA_VERSION=11.7.0
 
 FROM nvidia/cuda:$CUDA_VERSION-base-ubi8 as license
@@ -35,11 +35,14 @@ FROM fedora:$FEDORA_VERSION
 
 ARG TARGETARCH
 ENV TARGETARCH=$TARGETARCH
+
+ARG KERNEL_TYPE
+ENV KERNEL_TYPE=$KERNEL_TYPE
+
 ARG HTTP_PROXY
 ENV HTTP_PROXY=$HTTP_PROXY
 ARG HTTPS_PROXY
 ENV HTTPS_PROXY=$HTTPS_PROXY
-
 
 SHELL ["/bin/bash", "-c"]
 
@@ -129,12 +132,12 @@ LABEL description="See summary"
 # Add NGC DL license
 COPY --from=license /NGC-DL-CONTAINER-LICENSE /licenses/NGC-DL-CONTAINER-LICENSE
 
-# # Install / upgrade packages here that are required to resolve CVEs
-# ARG CVE_UPDATES
-# RUN if [ -n "${CVE_UPDATES}" ]; then \
-#         yum update -y ${CVE_UPDATES} && \
-#         rm -rf /var/cache/yum/*; \
-#     fi
+# Install / upgrade packages here that are required to resolve CVEs
+ARG CVE_UPDATES
+RUN if [ -n "${CVE_UPDATES}" ]; then \
+        dnf update -y ${CVE_UPDATES} && \
+        dnf clean all; \
+    fi
 
 # Remove cuda repository to avoid GPG errors
 RUN rm -f /etc/yum.repos.d/cuda.repo

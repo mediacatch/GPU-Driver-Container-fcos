@@ -20,7 +20,7 @@ NVIDIA datacenter GPUs based on Pascal+ architecture (e.g. P100, V100, T4, A100)
 
 NVIDIA datacenter drivers support a specific CUDA version and have minimum supported Linux kernel constraints.
 
-Currently built driver version are specified in `ci/fedora/.common-ci-fcos.yml` with 510.47.03 the latest target.
+Currently built driver version are specified in `ci/fedora/.common-ci-fcos.yml` with 525.85.12 the latest driver version targeted.
 
 ## Getting Started
 
@@ -29,10 +29,13 @@ Currently built driver version are specified in `ci/fedora/.common-ci-fcos.yml` 
 The driver container is privileged, and here we choose to launch via podman instead of docker.
 
 ```bash
-$ DRIVER_VERSION=510.47.03-fedora$(cat /etc/os-release | grep VERSION_ID | cut -d = -f2)-$(uname -r)
-$ podman run -d --privileged --pid=host \
+KERNEL_VERSION=$(/bin/uname -r)
+FEDORA_VERSION_ID=$(cat /etc/os-release | grep VERSION_ID | cut -d = -f2)
+DRIVER_VERSION=525.85.12-${KERNEL_VERSION}-fedora${FEDORA_VERSION_ID}
+sudo modprobe video # Required since kernel 6.1
+sudo podman run -d --privileged --pid=host \
      -v /run/nvidia:/run/nvidia:shared \
-     -v /tmp/nvidia:/var/log \
+     -v /var/log:/var/log \
      --name nvidia-driver \
      registry.gitlab.com/container-toolkit-fcos/driver:${DRIVER_VERSION}
 ```
@@ -57,13 +60,14 @@ Or, on FCOS registering as a systemd unit via an ignition snippet.
         ExecStartPre=-setenforce 0
         ExecStartPre=-/bin/mkdir -p /run/nvidia
         ExecStartPre=-/bin/sh -c 'KERNEL_VERSION=$(/bin/uname -r);FEDORA_VERSION_ID=$(cat /etc/os-release | grep VERSION_ID | cut -d = -f2); \
-            /bin/podman pull registry.gitlab.com/container-toolkit-fcos/driver:510.47.03-$$FEDORA_VERSION_ID-$$KERNEL_VERSION'
+            /bin/podman pull registry.gitlab.com/container-toolkit-fcos/driver:525.85.12-$$KERNEL_VERSION-$$FEDORA_VERSION_ID'
+        ExecStartPre=-/usr/sbin/modprobe video
         ExecStart=/bin/sh -c 'KERNEL_VERSION=$(/bin/uname -r);FEDORA_VERSION_ID=$(cat /etc/os-release | grep VERSION_ID | cut -d = -f2);/bin/podman run --name nvidia-driver \
             -v /run/nvidia:/run/nvidia:shared \
             -v /var/log:/var/log \
             --privileged \
             --pid=host \
-            registry.gitlab.com/container-toolkit-fcos/driver:510.47.03-fedora$$FEDORA_VERSION_ID-$$KERNEL_VERSION \
+            registry.gitlab.com/container-toolkit-fcos/driver:525.85.12-$$KERNEL_VERSION-fedora$$FEDORA_VERSION_ID \
                         --accept-license'
 
         ExecStop=/bin/podman stop nvidia-driver
@@ -82,7 +86,7 @@ You should be able to step into the driver container and run the `nvidia-smi` to
 ```bash
 $ # Assumes you've named the container nvidia-driver as above../
 $ podman exec -it nvidia-driver bash 
-[root@8dc88dad905e nvidia-510.47.03]# nvidia-smi
+[root@8dc88dad905e]# nvidia-smi
 Wed May 25 15:24:00 2022
 +-----------------------------------------------------------------------------+
 | NVIDIA-SMI 510.47.03    Driver Version: 510.47.03    CUDA Version: 11.6     |
@@ -103,7 +107,7 @@ Wed May 25 15:24:00 2022
 |=============================================================================|
 |  No running processes found                                                 |
 +-----------------------------------------------------------------------------+
-[root@8dc88dad905e nvidia-510.47.03]#
+[root@8dc88dad905e]#
 ```
 
 ### Install Container Runtime / Toolkit

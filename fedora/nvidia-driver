@@ -7,6 +7,7 @@ RUN_DIR=/run/nvidia
 PID_FILE=${RUN_DIR}/${0##*/}.pid
 DRIVER_VERSION=${DRIVER_VERSION:?"Missing DRIVER_VERSION env"}
 KERNEL_UPDATE_HOOK=/run/kernel/postinst.d/update-nvidia-driver
+KERNEL_TYPE=${KERNEL_TYPE:-kernel} # Only other type is "kernel-open"
 KOJI_BASE_URL=https://kojipkgs.fedoraproject.org
 NUM_VGPU_DEVICES=0
 NVIDIA_MODULE_PARAMS=()
@@ -78,7 +79,8 @@ _install_prerequisites() (
     KERNEL_RPM_ARCH=${KERNEL_VERSION##*.}
 
     echo "Installing Linux kernel headers..."
-    if ! dnf -q -y install kernel-headers-${KERNEL_VERSION} > /dev/null; then
+    if ! dnf -q -y install kernel-headers-6.2.6-300.fc38 > /dev/null; then
+    # if ! dnf -q -y install kernel-headers-${KERNEL_VERSION} > /dev/null; then
         echo "Failed to find kernel-headers-${KERNEL_VERSION} in repositories."
         echo "Trying to download kernel-headers from koji..."
         KOJI_KERNEL_HEADERS_RPM=$KOJI_BASE_URL/packages/kernel-headers/$KERNEL_RPM_VERSION/$KERNEL_RPM_RELEASE/$KERNEL_RPM_ARCH/kernel-headers-$KERNEL_VERSION.rpm
@@ -104,18 +106,39 @@ _install_prerequisites() (
     fi
     ln -s /usr/src/kernels/${KERNEL_VERSION} /lib/modules/${KERNEL_VERSION}/build
 
-    echo "Installing Linux kernel module files..."
+    echo "Installing Linux kernel core files..."
     if ! dnf -q -y download kernel-core-${KERNEL_VERSION} > /dev/null; then
         echo "Failed to find kernel-core-${KERNEL_VERSION} in repositories."
         echo "Trying to download kernel-core from koji..."
         KOJI_KERNEL_CORE_RPM=$KOJI_BASE_URL/packages/kernel/$KERNEL_RPM_VERSION/$KERNEL_RPM_RELEASE/$KERNEL_RPM_ARCH/kernel-core-$KERNEL_VERSION.rpm
-        if ! dnf -q -y download $KOJI_KERNEL_CORE_RPM; then
+        if ! dnf -q -y download $KOJI_KERNEL_CORE_RPM \
+          --setopt=install_weak_deps=False; then
             echo "Can't find kernel-core-${KERNEL_VERSION}"
             echo "Please try to update your kernel on the host system."
             exit 1
+        else
+            echo 'Kernel core installed from koji'
         fi
     fi
+
     cat ./kernel-core-*.rpm | rpm2cpio | cpio -idm --quiet
+    rm ./*.rpm
+
+    echo "Installing Linux kernel module core files..."
+    if ! dnf -q -y download kernel-modules-core${KERNEL_VERSION} > /dev/null; then
+        echo "Failed to find kernel-modules-core-${KERNEL_VERSION} in repositories."
+        echo "Trying to download kernel-modules from koji..."
+        KOJI_KERNEL_CORE_RPM=$KOJI_BASE_URL/packages/kernel/$KERNEL_RPM_VERSION/$KERNEL_RPM_RELEASE/$KERNEL_RPM_ARCH/kernel-modules-core-$KERNEL_VERSION.rpm
+        if ! dnf -q -y download $KOJI_KERNEL_CORE_RPM \
+          --setopt=install_weak_deps=False; then
+            echo "Can't find kernel-modules-core-${KERNEL_VERSION}"
+            echo "Please try to update your kernel on the host system."
+            exit 1
+        else
+            echo 'Kernel modules installed from koji'
+        fi
+    fi
+    cat ./kernel-modules-*.rpm | rpm2cpio | cpio -idm --quiet
     rm ./*.rpm
 
     mv lib/modules/${KERNEL_VERSION}/modules.* /lib/modules/${KERNEL_VERSION}
@@ -173,8 +196,8 @@ _kernel_requires_package() {
 
     echo "Checking NVIDIA driver packages..."
 
-    [[ ! -d /usr/src/nvidia-${DRIVER_VERSION}/kernel ]] && return 0
-    cd /usr/src/nvidia-${DRIVER_VERSION}/kernel
+    [[ ! -d /usr/src/nvidia-${DRIVER_VERSION}/${KERNEL_TYPE} ]] && return 0
+    cd /usr/src/nvidia-${DRIVER_VERSION}/${KERNEL_TYPE}
 
     # When the kernel version is latest on host, this check fails and lead to recompilation, even when precompiled modules exist.
     #if [ "${KERNEL_VERSION}" != "$(uname -r)" ]; then
@@ -197,13 +220,14 @@ _create_driver_package() (
     local nvidia_modeset_sign_args=""
     local nvidia_uvm_sign_args=""
 
-    trap "make -s -j SYSSRC=/lib/modules/${KERNEL_VERSION}/build clean > /dev/null" EXIT
+    trap "make -s -e NV_EXCLUDE_KERNEL_MODULES=nvidia-drm -j SYSSRC=/lib/modules/${KERNEL_VERSION}/build nv-linux.o nv-modeset-linux.o > /dev/null" EXIT
 
     echo "Compiling NVIDIA driver kernel modules..."
-    cd /usr/src/nvidia-${DRIVER_VERSION}/kernel
+    cd /usr/src/nvidia-${DRIVER_VERSION}/${KERNEL_TYPE}
 
     if _gpu_direct_rdma_enabled; then
         ln -s /run/mellanox/drivers/usr/src/ofa_kernel /usr/src/
+        echo got here
         # if arch directory exists(MOFED >=5.5) then create a symlink as expected by GPU driver installer
         # This is required as currently GPU driver installer doesn't expect headers in x86_64 folder, but only in either default or kernel-version folder.
         # ls -ltr /usr/src/ofa_kernel/
@@ -451,7 +475,7 @@ _install_driver() {
         install_args+=("--accept-license")
     fi
 
-    IGNORE_CC_MISMATCH=1 nvidia-installer --kernel-module-only --no-drm --ui=none --no-nouveau-check ${install_args[@]+"${install_args[@]}"}
+    IGNORE_CC_MISMATCH=1 nvidia-installer --kernel-module-only --no-drm --ui=none --no-nouveau-check -m=${KERNEL_TYPE} ${install_args[@]+"${install_args[@]}"}
     # May need to add no-cc-check for Rhel, otherwise it complains about cc missing in path
     # /proc/version and lib/modules/KERNEL_VERSION/proc are different, by default installer looks at /proc/ so, added the proc-mount-point
     # TODO: remove the -a flag. its not needed. in the new driver version, license-acceptance is implicit
@@ -466,8 +490,14 @@ _mount_rootfs() {
     mkdir -p ${RUN_DIR}/driver
     mount --rbind / ${RUN_DIR}/driver
 
-    echo "Change device files security context for selinux compatibility"
-    chcon -R -t container_file_t ${RUN_DIR}/driver/dev
+    echo "Check SELinux status"
+    if [ -e /sys/fs/selinux ]; then
+        echo "SELinux is enabled"
+        echo "Change device files security context for selinux compatibility"
+        chcon -R -t container_file_t ${RUN_DIR}/driver/dev
+    else
+        echo "SELinux is disabled, skipping..."
+    fi
 }
 
 # Unmount the driver rootfs from the run directory.
@@ -500,6 +530,11 @@ EOF
 }
 
 _shutdown() {
+    if [ -f /var/log/nvidia-installer.log ]; then
+        echo ***
+        cat /var/log/nvidia-installer.log
+        echo ***
+    fi
     if _unload_driver; then
         _unmount_rootfs
         rm -f ${PID_FILE} ${KERNEL_UPDATE_HOOK}
@@ -556,11 +591,11 @@ _prepare() {
     fi
 
     # Install the userspace components and copy the kernel module sources.
-    sh NVIDIA-Linux-$DRIVER_ARCH-$DRIVER_VERSION.run -x && \
+    sh NVIDIA-Linux-$DRIVER_ARCH-$DRIVER_VERSION.run -x -m=${KERNEL_TYPE} && \
         cd NVIDIA-Linux-$DRIVER_ARCH-$DRIVER_VERSION && \
         sh /tmp/install.sh nvinstall && \
         mkdir -p /usr/src/nvidia-$DRIVER_VERSION && \
-        mv LICENSE mkprecompiled kernel /usr/src/nvidia-$DRIVER_VERSION && \
+        mv LICENSE mkprecompiled ${KERNEL_TYPE} /usr/src/nvidia-$DRIVER_VERSION && \
         sed '9,${/^\(kernel\|LICENSE\)/!d}' .manifest > /usr/src/nvidia-$DRIVER_VERSION/.manifest
 
     echo -e "\n========== NVIDIA Software Installer ==========\n"
@@ -650,11 +685,11 @@ update() {
     if [ "${DRIVER_TYPE}" != "vgpu" ]; then
         # Install the userspace components and copy the kernel module sources.
         if [ ! -e /usr/src/nvidia-${DRIVER_VERSION}/mkprecompiled ]; then
-            sh NVIDIA-Linux-$DRIVER_ARCH-$DRIVER_VERSION.run -x && \
+            sh NVIDIA-Linux-$DRIVER_ARCH-$DRIVER_VERSION.run -x -m=${KERNEL_TYPE} && \
                 cd NVIDIA-Linux-$DRIVER_ARCH-$DRIVER_VERSION && \
                 sh /tmp/install.sh nvinstall && \
                 mkdir -p /usr/src/nvidia-$DRIVER_VERSION && \
-                mv LICENSE mkprecompiled kernel /usr/src/nvidia-$DRIVER_VERSION && \
+                mv LICENSE mkprecompiled ${KERNEL_TYPE} /usr/src/nvidia-$DRIVER_VERSION && \
                 sed '9,${/^\(kernel\|LICENSE\)/!d}' .manifest > /usr/src/nvidia-$DRIVER_VERSION/.manifest
         fi
     fi

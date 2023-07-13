@@ -19,7 +19,7 @@ default:
       command: ["--experimental"]
 
 variables:
-  DRIVER_VERSIONS: 450.236.01 470.182.03 515.105.01 525.105.17
+  DRIVER_VERSIONS: 450.248.02 470.199.02 525.125.06 535.54.03
   BUILD_MULTI_ARCH_IMAGES: "true"
 
 stages:
@@ -29,62 +29,64 @@ stages:
   - scan
   - release
 
+.pipeline-trigger-rules:
+  rules:
+    # We trigger the pipeline if started manually
+    - if: $CI_PIPELINE_SOURCE == "web"
+    # We trigger the pipeline on the main branch
+    - if: $CI_COMMIT_BRANCH == "main"
+    # We trigger the pipeline on tags
+    - if: $CI_COMMIT_TAG && $CI_COMMIT_TAG != ""
+
 workflow:
   rules:
+    # We trigger the pipeline on a merge request
     - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
-    - if: $CI_PIPELINE_SOURCE == "web"
-    - if: $CI_COMMIT_BRANCH == "main"
-    - if: $CI_COMMIT_TAG && $CI_COMMIT_TAG != ""
+    # We trigger the pipeline on a schedule
+    - if: $CI_PIPELINE_SOURCE == 'schedule'
+    # We then add all the regular triggers
+    - !reference [.pipeline-trigger-rules, rules]
 
-.main-or-manual:
-  rules:
-    - if: $CI_COMMIT_BRANCH == "main"
-    - if: $CI_COMMIT_TAG && $CI_COMMIT_TAG != ""
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: manual
-
+# This template is used to filter out distributions or architectures that are not required on
+# every build.
 .manual-only:
   rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_PIPELINE_SOURCE != "schedule"
       when: manual
-      allow_failure: true
 
 trigger-pipeline:
   stage: trigger
   script:
     - echo "starting pipeline"
   rules:
-    - !reference [.main-or-manual, rules]
+    # All pipelines on merge requests must be manually triggered
     - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
       when: manual
       allow_failure: false
-    - when: always
+    # We schedule the job on a pipeline schedule
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    # We then add all the regular triggers
+    - !reference [.pipeline-trigger-rules, rules]
 
 # Define the driver versions for jobs that can be run in parallel
 .driver-versions:
   parallel:
     matrix:
-      - DRIVER_VERSION: [450.236.01, 470.182.03, 515.105.01, 525.105.17]
+      - DRIVER_VERSION: [450.248.02, 470.199.02, 525.125.06, 535.54.03]
 
 # Define the driver versions for jobs that can be run in parallel for ubuntu22.04
 .driver-versions-ubuntu22.04:
   parallel:
     matrix:
-      - DRIVER_VERSION: [515.105.01, 525.105.17]
+      - DRIVER_VERSION: [525.125.06, 535.54.03]
 
-# Define the driver-branch versions for jobs that can be run in parallel for ubuntu22.04
-# for now is just 525, but we can add more branches later.
+# Define the driver branches for precompiled jobs that can be run in parallel for ubuntu22.04
 .driver-versions-precompiled-ubuntu22.04:
-  variables:
-    DRIVER_BRANCH: "525"
+  parallel:
+    matrix:
+      - DRIVER_BRANCH: [525, 535]
 
 # Define the distribution targets
-.dist-ubuntu18.04:
-  variables:
-    DIST: ubuntu18.04
-    CVE_UPDATES: "openssl"
-
 .dist-ubuntu20.04:
   variables:
     DIST: ubuntu20.04
@@ -95,14 +97,9 @@ trigger-pipeline:
     DIST: ubuntu22.04
     CVE_UPDATES: "openssl"
 
-.dist-signed-ubuntu20.04:
+.dist-rhel8:
   variables:
-    DIST: signed_ubuntu20.04
-    CVE_UPDATES: "openssl"
-
-.dist-rhcos4.12:
-  variables:
-    DIST: rhcos4.12
+    DIST: rhel8
 
 .dist-centos7:
   variables:
@@ -166,12 +163,16 @@ trigger-pipeline:
   extends:
     - .release-generic
     - .driver-versions-ubuntu22.04
+  rules:
+    - if: $CI_PIPELINE_SOURCE != "schedule"
 
 .release:
   # Perform for each DRIVER_VERSION
   extends:
     - .release-generic
     - .driver-versions
+  rules:
+    - if: $CI_PIPELINE_SOURCE != "schedule"
 
 # Define a staging release step that pushes an image to an internal "staging" repository
 # This is triggered for all pipelines (i.e. not only tags) to test the pipeline steps
@@ -184,9 +185,6 @@ trigger-pipeline:
     OUT_REGISTRY_TOKEN: "${CI_REGISTRY_PASSWORD}"
     OUT_REGISTRY: "${CI_REGISTRY}"
     OUT_IMAGE_NAME: "${CI_REGISTRY_IMAGE}/staging/driver"
-  except:
-    variables:
-      - $CI_PRECOMPILED
 
 .release:staging-ubuntu22.04:
   extends:
@@ -196,9 +194,6 @@ trigger-pipeline:
     OUT_REGISTRY_TOKEN: "${CI_REGISTRY_PASSWORD}"
     OUT_REGISTRY: "${CI_REGISTRY}"
     OUT_IMAGE_NAME: "${CI_REGISTRY_IMAGE}/staging/driver"
-  except:
-    variables:
-      - $CI_PRECOMPILED
 
 # Define an external release step that pushes an image to an external repository.
 .release:external:
@@ -207,15 +202,12 @@ trigger-pipeline:
   rules:
     - if: $CI_COMMIT_TAG
       variables:
-        VERSION: "${CI_COMMIT_TAG}"
+        #VERSION: "${CI_COMMIT_TAG}"
         OUT_VERSION: ""
     - if: $CI_COMMIT_BRANCH == $RELEASE_DEVEL_BRANCH
       variables:
         VERSION: "${RELEASE_DEVEL_TAG}"
         OUT_VERSION: "${DEVEL_RELEASE_IMAGE_VERSION}"
-    - exists:
-        - $CI_PRECOMPILED
-      when: never
 
 .release:external-ubuntu22.04:
   extends:
@@ -223,19 +215,12 @@ trigger-pipeline:
   rules:
     - if: $CI_COMMIT_TAG
       variables:
-        VERSION: "${CI_COMMIT_TAG}"
+        #VERSION: "${CI_COMMIT_TAG}"
         OUT_VERSION: ""
     - if: $CI_COMMIT_BRANCH == $RELEASE_DEVEL_BRANCH
       variables:
         VERSION: "${RELEASE_DEVEL_TAG}"
         OUT_VERSION: "${DEVEL_RELEASE_IMAGE_VERSION}"
-
-release:staging-ubuntu18.04:
-  extends:
-    - .release:staging
-    - .dist-ubuntu18.04
-  needs:
-    - image-ubuntu18.04
 
 release:staging-ubuntu20.04:
   extends:
@@ -251,32 +236,23 @@ release:staging-ubuntu22.04:
   needs:
     - image-ubuntu22.04
 
-release:staging-signed-ubuntu20.04:
+release:staging-rhel8:
   extends:
     - .release:staging
-    - .dist-signed-ubuntu20.04
+    - .dist-rhel8
   needs:
-    - image-signed-ubuntu20.04
-
-release:staging-rhcos4.12:
-  extends:
-    - .release:staging
-    - .dist-rhcos4.12
-  needs:
-    - image-rhcos4.12
+    - image-rhel8
 
 release:staging-centos7:
   extends:
     - .release:staging
     - .dist-centos7
+  needs:
     - image-centos7
 
-# Precompiled Ubuntu22.04 release
-release:staging-precompiled-ubuntu22.04:
+.release:staging-precompiled:
   stage: release
   variables:
-    DIST: signed_ubuntu22.04
-    BASE_TARGET: jammy
     IN_REGISTRY: "${STAGING_REGISTRY}"
     IN_IMAGE_NAME: driver
     OUT_REGISTRY_USER: "${CI_REGISTRY_USER}"
@@ -290,10 +266,16 @@ release:staging-precompiled-ubuntu22.04:
     OUT_VERSION: "${CI_COMMIT_SHORT_SHA}"
     PRECOMPILED: "true"
   extends:
-    - .driver-versions-precompiled-ubuntu22.04
     - .release-generic
+
+# Precompiled Ubuntu22.04 release
+release:staging-precompiled-ubuntu22.04:
+  variables:
+    DIST: signed_ubuntu22.04
+    BASE_TARGET: jammy
+    KERNEL_FLAVOR: generic
+  extends:
+    - .driver-versions-precompiled-ubuntu22.04
+    - .release:staging-precompiled
   needs:
     - image-precompiled-ubuntu22.04
-  except:
-    variables:
-      - $CI_PRECOMPILED

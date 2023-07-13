@@ -49,11 +49,12 @@ else
 OUT_IMAGE_VERSION = $(OUT_VERSION)-$(DRIVER_TAG)
 endif
 
-OUT_IMAGE_TAG = $(OUT_IMAGE_VERSION)-$(DIST)
+OUT_DIST ?= $(DIST)
+OUT_IMAGE_TAG = $(OUT_IMAGE_VERSION)-$(OUT_DIST)
 OUT_IMAGE = $(OUT_IMAGE_NAME):$(OUT_IMAGE_TAG)
 
 ##### Public rules #####
-DISTRIBUTIONS := ubuntu18.04 ubuntu20.04 ubuntu22.04 signed_ubuntu20.04 signed_ubuntu22.04 rhcos4.10 rhcos4.11 rhcos4.12 centos7 flatcar fedora36 sles15.3 precompiled_rhcos
+DISTRIBUTIONS := ubuntu18.04 ubuntu20.04 ubuntu22.04 signed_ubuntu20.04 signed_ubuntu22.04 rhel8 centos7 flatcar fedora36 sles15.3 precompiled_rhcos
 PUSH_TARGETS := $(patsubst %, push-%, $(DISTRIBUTIONS))
 BASE_FROM := jammy focal
 PUSH_TARGETS := $(patsubst %, push-%, $(DISTRIBUTIONS))
@@ -89,7 +90,7 @@ pull-signed_ubuntu20.04%: DRIVER_TAG = $(DRIVER_BRANCH)
 
 pull-signed_ubuntu22.04%: DIST = ubuntu22.04
 pull-signed_ubuntu22.04%: DRIVER_TAG = $(DRIVER_BRANCH)
-pull-signed_ubuntu22.04%: IMAGE_TAG = $(DRIVER_VERSION)-$(KERNEL_VERSION)-$(DIST)
+pull-signed_ubuntu22.04%: IMAGE_TAG = $(DRIVER_BRANCH)-$(KERNEL_VERSION)-$(DIST)
 
 PLATFORM ?= linux/amd64
 $(DRIVER_PULL_TARGETS): pull-%:
@@ -106,7 +107,7 @@ archive-signed_ubuntu20.04%: DRIVER_TAG = $(DRIVER_BRANCH)
 
 archive-signed_ubuntu22.04%: DIST = ubuntu22.04
 archive-signed_ubuntu22.04%: DRIVER_TAG = $(DRIVER_BRANCH)
-archive-signed_ubuntu22.04%: IMAGE_TAG = $(DRIVER_VERSION)-$(KERNEL_VERSION)-$(DIST)
+archive-signed_ubuntu22.04%: IMAGE_TAG = $(DRIVER_BRANCH)-$(KERNEL_VERSION)-$(DIST)
 
 $(DRIVER_ARCHIVE_TARGETS): archive-%:
 	$(DOCKER) save "$(IMAGE)" -o "archive.tar"
@@ -126,7 +127,7 @@ push-signed_ubuntu20.04%: DRIVER_TAG = $(DRIVER_BRANCH)
 
 push-signed_ubuntu22.04%: DIST = ubuntu22.04
 push-signed_ubuntu22.04%: DRIVER_TAG = $(DRIVER_BRANCH)
-push-signed_ubuntu22.04%: IMAGE_TAG = $(DRIVER_VERSION)-$(KERNEL_VERSION)-$(DIST)
+push-signed_ubuntu22.04%: IMAGE_TAG = $(DRIVER_BRANCH)-$(KERNEL_VERSION)-$(DIST)
 push-signed_ubuntu22.04%: OUT_IMAGE_TAG = $(DRIVER_BRANCH)-$(KERNEL_VERSION)-$(DIST)
 
 # $(DRIVER_BUILD_TARGETS) is in the form of build-$(DIST)-$(DRIVER_VERSION)
@@ -171,7 +172,7 @@ build-signed_ubuntu20.04%: DRIVER_TAG = $(DRIVER_BRANCH)
 build-signed_ubuntu22.04%: DIST = ubuntu22.04
 build-signed_ubuntu22.04%: SUBDIR = ubuntu22.04/precompiled
 build-signed_ubuntu22.04%: DRIVER_TAG = $(DRIVER_BRANCH)
-build-signed_ubuntu22.04%: IMAGE_TAG = $(DRIVER_VERSION)-$(KERNEL_VERSION)-$(DIST)
+build-signed_ubuntu22.04%: IMAGE_TAG = $(DRIVER_BRANCH)-$(KERNEL_VERSION)-$(DIST)
 build-signed_ubuntu22.04%: DOCKER_BUILD_ARGS =  --build-arg KERNEL_VERSION="$(KERNEL_VERSION)"
 
 # base is an image used to poll Canonical for the latest kernel version

@@ -25,7 +25,7 @@ function sourceVersions(){
         regctl image get-file registry.gitlab.com/nvidia/container-images/driver/staging/driver:base-${BASE_TARGET}-${DRIVER_BRANCH} /var/kernel_version.txt kernel_version.txt
     else
         trap "docker rm -f base-${BASE_TARGET}" EXIT
-        docker run -d --name base-${BASE_TARGET} registry.gitlab.com/nvidia/container-images/driver/staging/driver:base-${BASE_TARGET}-${DRIVER_BRANCH} 
+        docker run --pull=always -d --name base-${BASE_TARGET} registry.gitlab.com/nvidia/container-images/driver/staging/driver:base-${BASE_TARGET}-${DRIVER_BRANCH} 
         # try 3 times every 3 seconds to get the file, if success exit the loop
         for i in {1..3}; do
             docker cp base-${BASE_TARGET}:/var/kernel_version.txt kernel_version.txt && break
@@ -43,7 +43,7 @@ function buildBaseImage(){
 
 function buildImage(){
     # Build the image
-    make DRIVER_VERSIONS=${DRIVER_VERSIONS}  build-${DIST}-${DRIVER_VERSION}
+    make DRIVER_VERSIONS=${DRIVER_VERSIONS} DRIVER_BRANCH=${DRIVER_BRANCH} build-${DIST}-${DRIVER_VERSION}
 }
 
 function pushBaseImage(){
@@ -55,18 +55,34 @@ function pushBaseImage(){
 }
 
 function pushImage(){
+	# check if image exists in output registry
+	# note: DIST is in the form "signed_<distribution>", so we drop the '*_' prefix
+	# to extract the distribution string.
+	local out_image=${OUT_IMAGE_NAME}:${DRIVER_BRANCH}-${KERNEL_VERSION}-${DIST##*_}
+	if imageExists "$out_image"; then
+		echo "image tag already exists in output registry - $out_image"
+		if [ "$FORCE_PUSH" != "true" ]; then
+			echo "exiting"
+			return 0
+		fi
+		echo "overwriting image tag - $out_image"
+	fi
     # push the image
     make DRIVER_VERSIONS=${DRIVER_VERSIONS} DRIVER_BRANCH=${DRIVER_BRANCH} push-${DIST}
 }
 
 function pullImage(){
     # pull the image
-    make DRIVER_VERSIONS=${DRIVER_VERSIONS} pull-${DIST}-${DRIVER_VERSION}
+    make DRIVER_VERSIONS=${DRIVER_VERSIONS} DRIVER_BRANCH=${DRIVER_BRANCH} pull-${DIST}-${DRIVER_VERSION}
 }
 
 function archiveImage(){
     # archive the image
-    make DRIVER_VERSIONS=${DRIVER_VERSIONS} archive-${DIST}-${DRIVER_VERSION}
+    make DRIVER_VERSIONS=${DRIVER_VERSIONS} DRIVER_BRANCH=${DRIVER_BRANCH} archive-${DIST}-${DRIVER_VERSION}
+}
+
+function imageExists(){
+	regctl manifest get $1 --list > /dev/null && return 0 || return 1
 }
 
 case $1 in

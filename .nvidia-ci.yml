@@ -92,6 +92,7 @@ image-precompiled-ubuntu22.04:
     DIST: signed_ubuntu22.04
     BASE_TARGET: jammy
     PRECOMPILED: "true"
+    CVE_UPDATES: "curl libc6"
   rules:
     - when: delayed
       start_in: 30 minutes
@@ -133,6 +134,7 @@ image-centos7:
     - if: $SKIP_SCANS && $SKIP_SCANS == "yes"
       when: never
   before_script:
+    - !reference [.regctl-setup, before_script]
     # We ensure that the DRIVER_VERSION and PLATFORM are set
     - 'if [[ "${PRECOMPILED}" != "true" ]]; then echo DRIVER_VERSION: ${DRIVER_VERSION} ; [[ -n "${DRIVER_VERSION}" ]] || exit 1; fi'
     - 'echo PLATFORM: ${PLATFORM} ; [[ -n "${PLATFORM}" ]] || exit 1'
@@ -293,8 +295,6 @@ release:ngc-precompiled-ubuntu22.04:
     DIST: signed_ubuntu22.04
     BASE_TARGET: jammy
     PRECOMPILED: "true"
-    DOCKER: echo docker
-    REGCTL: echo regctl
   extends:
     - .driver-versions-precompiled-ubuntu22.04
     - .release-generic
